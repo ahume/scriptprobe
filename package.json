@@ -1,0 +1,16 @@
+{
+  "name": "scriptprobe",
+  "version": "0.0.1",
+  "main": "scriptprobe",
+  "description": "Analyse third-party JavaScripts for performance and security before adding them to your website.",
+  "keywords": "javascript, third-party, performance, security, blocking",
+  "author": {
+    "name": "Andy Hume",
+    "email": "andyhume@gmail.com",
+    "url": "http://andyhume.net"
+  },
+  "dependencies": {
+    "sandbox": "0.8.3",
+    "zombie": "1.3.1"
+  }
+}
