@@ -1,91 +1,108 @@
-var http 	= require('http');
-var url		= require('url');
-var Sandbox = require('sandbox');
-var Browser	= require('zombie');
+#!/usr/bin/env node
+
+var http      = require('http');
+var url       = require('url');
+var Sandbox   = require('sandbox');
+var Browser   = require('zombie');
+var program = require('commander');
 
 
 function testBrowser() {
-	var browser = new Browser();
-	browser.visit("http://google.com", function () {
+    var browser = new Browser();
+    browser.visit("http://google.com", function () {
 
-	  console.log(browser.text("title"));
+      console.log(browser.text("title"));
 
-	});
+    });
 }
 
-var testUrl = 'http://cdn.optimizely.com/js/10822091.js';
-
-
-function makeRequest() {
-
-	var parsedUrl = url.parse(testUrl);
-
-	var options = {
-		host: parsedUrl.host,
-		path: parsedUrl.path,
-		headers: {
-			'Accept-Encoding': 'gzip,deflate,sdch'
-		}
-	}
-
-	var callback = function(response) {
-		var body = '';
-
-		response.on('data', function(chunk) {
-			body += chunk;
-		})
-		response.on('end', function() {
-			detailResponse(body, response)
-		});
-	}
-
-	http.request(options, callback).end();
+function ScriptTest(url) {
+    this.url = url;
+    this.makeRequest();
 }
 
-function detailResponse(body, response) {
-	console.log(response.headers);
-	response.lowerCaseHeaders = {};
-	for (var header in response.headers) {
-		response.lowerCaseHeaders[header.toLowerCase()] = response.headers[header].toLowerCase();
-	}
+ScriptTest.prototype.makeRequest = function() {
 
-	response.checkHeader = function(name, value) {
-		return this.lowerCaseHeaders[name.toLowerCase()] === value.toLowerCase();
-	}
+    var parsedUrl = url.parse(this.url);
 
-	response.getHeader = function(name) {
-		return this.lowerCaseHeaders[name.toLowerCase()]
-	}
+    var options = {
+        host: parsedUrl.host,
+        path: parsedUrl.path,
+        headers: {
+            'Accept-Encoding': 'gzip,deflate,sdch'
+        }
+    }
 
-	// var s = new Sandbox()
-	// s.run(body, function(output) {
-	// 	console.log(output);
-	// })
+    var me = this;
+    var callback = function(response) {
+        var body = '';
 
-	var details = {
-		statusCode: response.statusCode,
-		bodySize: body.length,
-		gzip: response.checkHeader('Content-Encoding', 'gzip'),
-		cacheControl: response.getHeader('cache-ConTrol'),
-		cdn: checkCDN(response.getHeader('server'))
-	}
-	//console.log(details);
+        response.on('data', function(chunk) {
+            body += chunk;
+        })
+        response.on('end', function() {
+            me.detailResponse(body, response)
+        });
+    }
+
+    http.request(options, callback).end();
+}
+
+ScriptTest.prototype.detailResponse = function(body, response) {
+    response.lowerCaseHeaders = {};
+    for (var header in response.headers) {
+        response.lowerCaseHeaders[header.toLowerCase()] = response.headers[header].toLowerCase();
+    }
+
+    response.checkHeader = function(name, value) {
+        return this.lowerCaseHeaders[name.toLowerCase()] === value.toLowerCase();
+    }
+
+    response.getHeader = function(name) {
+        return this.lowerCaseHeaders[name.toLowerCase()]
+    }
+
+    // var s = new Sandbox()
+    // s.run(body, function(output) {
+    //  console.log(output);
+    // })
+
+    var results = {
+        statusCode: response.statusCode,
+        bodySize: body.length,
+        gzip: response.checkHeader('Content-Encoding', 'gzip'),
+        cacheControl: response.getHeader('cache-ConTrol'),
+        cdn: checkCDN(response.getHeader('server'))
+    }
+
+    console.log(results);
 }
 
 function checkCDN(server) {
-	var cdnList = ['amazons3', 'akamai', 'level3'];
-	return cdnList.indexOf(server) > -1
+    var cdnList = ['amazons3', 'akamai', 'level3'];
+    return cdnList.indexOf(server) > -1
 }
 
 function checkDocumentDotWrite(body) {
-	if (body.indexOf('document.write(') > -1) {
-		return 'definite';
-	}
+    if (body.indexOf('document.write(') > -1) {
+        return 'definite';
+    }
 }
 
-//makeRequest();
-
 module.exports = {
-	makeRequest: makeRequest,
-	testBrowser: testBrowser
+    ScriptTest: ScriptTest
+}
+
+// If we're running from CLI
+if (!module.parent) {
+
+    program
+        .version('0.0.1')
+        .option('-U --url <url>', 'URL to test')
+        .parse(process.argv);
+
+    if (program.url) {
+        console.log("Testing: ", program.url);
+        var test = new ScriptTest(program.url);
+    }
 }
