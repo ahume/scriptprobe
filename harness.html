@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title></title>
+	{{#second}}
+	<script>
+		console.log("We're doing the JS");
+		var ScriptProbe = {};
+
+		// Detect XHR
+		ScriptProbe.originalXHR = XMLHttpRequest;
+		ScriptProbe.xhr = 0;
+		XMLHttpRequest = function() {
+			ScriptProbe.xhr + 1;
+			return new ScriptProbe.originalXHR();
+		}
+
+		// Detect document.writes
+		ScriptProbe.originalWrite = document.write;
+		document.write = function(str) {
+			ScriptProbe.documentDotWrite = true;
+			ScriptProbe.originalWrite(str);
+		}
+
+	</script>
+	{{/second}}
+	<script id="ScriptProbe-Script" src="{{url}}"></script>
+</head>
+<body>
+<h1>Here we are</h1>
+</body>
+</html>

@@ -1,57 +1,80 @@
 #!/usr/bin/env node
 
-var http      = require('http');
-var url       = require('url');
-var Sandbox   = require('sandbox');
-var Browser   = require('zombie');
-var program = require('commander');
+var http        = require('http');
+var dns         = require('dns');
+var fs          = require('fs');
+var urlm        = require('url');
+var mustache    = require('mustache');
+var async       = require('async');
+var Browser     = require('zombie');
+var program     = require('commander');
 
+var browserRefs = require('./browser_refs.js');
+var cdn         = require('./cdn.js');
 
-function testBrowser() {
-    var browser = new Browser();
-    browser.visit("http://google.com", function () {
+var server, results = {};
 
-      console.log(browser.text("title"));
-
-    });
-}
 
 function ScriptTest(url) {
     this.url = url;
-    this.makeRequest();
 }
 
-ScriptTest.prototype.makeRequest = function() {
+ScriptTest.prototype.go = function(callback) {
+    this.callback = callback;
+    this.parsedUrl = urlm.parse(this.url);
+    var me = this;
+    async.parallel([
+        function(callback) {
+            me.makeRequest(function() {
+                callback();
+            });
+        },
+        function(callback) {
+            me.testBrowser(function() {
+                callback();
+            });
+        }    
+    ], function(err, r) {
+        me.callback(results);
+    });
+}
 
-    var parsedUrl = url.parse(this.url);
+ScriptTest.prototype.makeRequest = function(callback) {
 
     var options = {
-        host: parsedUrl.host,
-        path: parsedUrl.path,
+        hostname: this.parsedUrl.hostname,
+        path: this.parsedUrl.path,
+        port: this.parsedUrl.port,
         headers: {
-            'Accept-Encoding': 'gzip,deflate,sdch'
+            'Accept-Encoding': 'gzip,deflate,sdch',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_4) AppleWebKit/534.57.2 (KHTML, like Gecko) Version/5.1.7 Safari/534.57.2'
         }
     }
 
     var me = this;
-    var callback = function(response) {
+    var cb = function(response) {
         var body = '';
 
         response.on('data', function(chunk) {
             body += chunk;
         })
         response.on('end', function() {
-            me.detailResponse(body, response)
+            me.detailResponse(body, response, function() {
+                callback();
+            });
         });
     }
 
-    http.request(options, callback).end();
+
+    http.request(options, cb).end();
 }
 
-ScriptTest.prototype.detailResponse = function(body, response) {
+ScriptTest.prototype.detailResponse = function(body, response, callback) {
     response.lowerCaseHeaders = {};
     for (var header in response.headers) {
-        response.lowerCaseHeaders[header.toLowerCase()] = response.headers[header].toLowerCase();
+        if (header.toLowerCase() !== 'set-cookie') {
+            response.lowerCaseHeaders[header.toLowerCase()] = response.headers[header].toLowerCase();
+        }
     }
 
     response.checkHeader = function(name, value) {
@@ -62,31 +85,83 @@ ScriptTest.prototype.detailResponse = function(body, response) {
         return this.lowerCaseHeaders[name.toLowerCase()]
     }
 
-    // var s = new Sandbox()
-    // s.run(body, function(output) {
-    //  console.log(output);
-    // })
+    results['statusCode'] = response.statusCode;
+    results['bodySize'] = body.length;
+    results['gzip'] = response.checkHeader('Content-Encoding', 'gzip');
+    results['cacheControl'] = response.getHeader('cache-Control');
 
-    var results = {
-        statusCode: response.statusCode,
-        bodySize: body.length,
-        gzip: response.checkHeader('Content-Encoding', 'gzip'),
-        cacheControl: response.getHeader('cache-ConTrol'),
-        cdn: checkCDN(response.getHeader('server'))
-    }
-
-    console.log(results);
+    cdn.isCdnHostname(this.parsedUrl.hostname, function(isCdn) {
+        results['cdn'] = isCdn;
+        callback();
+    });
 }
 
-function checkCDN(server) {
-    var cdnList = ['amazons3', 'akamai', 'level3'];
-    return cdnList.indexOf(server) > -1
+ScriptTest.prototype.analysePage = function(callback) {
+    var browser = new Browser();
+    browser.visit("http://127.0.0.1:1337/first", function () {
+
+        var refsAdded = [];
+        for (var name in browser.evaluate('window')) {
+            if (browserRefs.indexOf(name) < 0) {
+                refsAdded.push(name);
+            }
+        }
+
+        function countElements(el) {
+            return browser.document.querySelectorAll(el).length;
+        }
+
+        results['globalVars'] = refsAdded;
+        results['additionalScripts'] = countElements('script[src]') - 1;
+        results['additionalCss'] = countElements('style[href]');
+        results['additionalImages'] = countElements('img');
+        results['additionalIframes'] = countElements('iframe');
+        callback();
+    });
 }
 
-function checkDocumentDotWrite(body) {
-    if (body.indexOf('document.write(') > -1) {
-        return 'definite';
-    }
+ScriptTest.prototype.detectFunctionCalls = function(callback) {
+    var browser = new Browser();
+    browser.visit("http://127.0.0.1:1337/second", function () {
+
+        results['additionalXHR'] = browser.evaluate('ScriptProbe.xhr');
+        results['documentDotWrite'] = browser.evaluate('ScriptProbe.documentDotWrite') || false;
+        callback();
+    });
+}
+
+ScriptTest.prototype.testBrowser = function(callback) {
+
+    startServer(this.url);
+
+    async.parallel([
+        this.analysePage,
+        this.detectFunctionCalls
+    ], function() {
+        server.close();
+        callback();
+    });
+}
+
+function startServer(url) {
+    var template = fs.readFileSync('harness.html').toString();
+    var output = mustache.to_html(template, {'url':url});
+
+    server = http.createServer(function (req, res) {
+        res.writeHead(200, {'Content-Type': 'text/html'});
+
+        var url_parts = urlm.parse(req.url);
+        switch(url_parts.pathname) {
+            case '/first':
+                var output = mustache.to_html(template, {'url':url});
+                break;
+            case '/second':
+                var output = mustache.to_html(template, {'url':url, 'second':true});
+                break;
+        }
+        res.end(output);
+    });
+    server.listen(1337, '127.0.0.1');
 }
 
 module.exports = {
@@ -104,5 +179,13 @@ if (!module.parent) {
     if (program.url) {
         console.log("Testing: ", program.url);
         var test = new ScriptTest(program.url);
+        test.go(function(results) {
+            if (results.statusCode !== 200) {
+                console.log("Document Not Found");
+                console.log("------------------");
+            }
+            console.log(results);
+            console.log(results.globalVars);
+        });
     }
 }
