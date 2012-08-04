@@ -1,7 +1,7 @@
 {
   "name": "scriptprobe",
   "version": "0.0.2",
-  "main": "scriptprobe",
+  "main": "lib/scriptprobe",
   "description": "Analyse third-party JavaScripts for performance and security before adding them to your website.",
   "keywords": "javascript, third-party, performance, security, blocking",
   "author": {
